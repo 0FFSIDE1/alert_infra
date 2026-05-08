@@ -14,16 +14,7 @@ requires-python = ">=3.9"
 
 dynamic = ["version"]
 
-dependencies = [
-    "django>=4.2",
-    "feature-flag-infra",
-    "celery",
-    "redis",
-    "python-dotenv",
-    "resend",
-    "sendgrid"
-
-]
+dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -41,9 +32,12 @@ version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
 
 [project.optional-dependencies]
+django = ["django>=4.2"]
 celery = ["celery>=5"]
 redis = ["redis>=4"]
+legacy-email = ["requests", "sendgrid", "resend"]
 dev = [
+    "django>=4.2",
     "pytest",
     "pytest-django",
     "pytest-mock",

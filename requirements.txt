@@ -1,8 +1,4 @@
-django
-feature_flag_infra
-celery
-redis
-python-dotenv
+django>=4.2
 pytest
 pytest-django
 pytest-cov
