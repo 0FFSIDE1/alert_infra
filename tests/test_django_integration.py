@@ -95,3 +95,100 @@ def test_send_alert_redacts_sensitive_metadata_with_disabled_mode() -> None:
         )
 
     assert result.sent == ()
+
+
+def test_build_dispatcher_passes_django_email_templates() -> None:
+    dispatcher = build_dispatcher(
+        {
+            "ENABLED": True,
+            "EMAIL": {
+                "ENABLED": True,
+                "FROM_EMAIL": "alerts@example.com",
+                "TO_EMAILS": ["ops@example.com"],
+                "SUBJECT_TEMPLATE": "alerts/subject.txt",
+                "BODY_TEMPLATE": "alerts/body.txt",
+                "HTML_TEMPLATE": "alerts/body.html",
+                "TEMPLATE_CONTEXT": {"product_name": "Billing"},
+            },
+            "SLACK": {"ENABLED": False},
+            "TELEGRAM": {"ENABLED": False},
+        }
+    )
+
+    transport = dispatcher.transports[0]
+
+    assert isinstance(transport, DjangoEmailTransport)
+    assert transport.subject_template_name == "alerts/subject.txt"
+    assert transport.body_template_name == "alerts/body.txt"
+    assert transport.html_template_name == "alerts/body.html"
+    assert transport.template_context == {"product_name": "Billing"}
+
+
+def test_django_email_transport_renders_templates() -> None:
+    from django.core import mail
+
+    from alert_infra import Alert
+
+    template_settings = {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "APP_DIRS": False,
+        "OPTIONS": {
+            "loaders": [
+                (
+                    "django.template.loaders.locmem.Loader",
+                    {
+                        "alerts/subject.txt": "{{ product_name }} {{ alert.severity|upper }} {{ alert.title }}\n",
+                        "alerts/body.txt": "{{ alert.message }} for {{ metadata.invoice_id }}",
+                        "alerts/body.html": "<strong>{{ alert.title }}</strong>: {{ alert.message }}",
+                    },
+                )
+            ]
+        },
+    }
+
+    with override_settings(TEMPLATES=[template_settings]):
+        transport = DjangoEmailTransport(
+            from_email="alerts@example.com",
+            to_emails=["ops@example.com"],
+            subject_template_name="alerts/subject.txt",
+            body_template_name="alerts/body.txt",
+            html_template_name="alerts/body.html",
+            template_context={"product_name": "Billing"},
+        )
+        transport.send(
+            Alert(
+                title="Payment failed",
+                message="Provider returned 500",
+                severity="critical",
+                metadata={"invoice_id": "INV-001"},
+            )
+        )
+
+    message = mail.outbox[-1]
+
+    assert message.subject == "Billing CRITICAL Payment failed"
+    assert message.body == "Provider returned 500 for INV-001"
+    assert message.alternatives[0][0] == "<strong>Payment failed</strong>: Provider returned 500"
+    assert message.alternatives[0][1] == "text/html"
+
+
+def test_feature_flag_infra_settings_alias_is_supported() -> None:
+    with override_settings(
+        ALERT_INFRA=None,
+        FEATURE_FLAG_INFRA={
+            "ENABLED": True,
+            "EMAIL": {"ENABLED": True, "FROM_EMAIL": "alerts@example.com", "TO_EMAILS": ["ops@example.com"]},
+        },
+    ):
+        cfg = get_alert_infra_settings()
+
+    assert cfg["EMAIL"]["ENABLED"] is True
+    assert cfg["EMAIL"]["FROM_EMAIL"] == "alerts@example.com"
+
+
+def test_feature_flag_infra_namespace_reexports_django_helpers() -> None:
+    from feature_flag_infra.django import DjangoEmailTransport as FeatureFlagDjangoEmailTransport
+    from feature_flag_infra.django import build_dispatcher as feature_flag_build_dispatcher
+
+    assert FeatureFlagDjangoEmailTransport is DjangoEmailTransport
+    assert feature_flag_build_dispatcher is build_dispatcher
