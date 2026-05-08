@@ -1,0 +1,8 @@
+django
+feature_flag_infra
+celery
+redis
+python-dotenv
+pytest
+pytest-django
+pytest-cov

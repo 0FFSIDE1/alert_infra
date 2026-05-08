@@ -1,0 +1,15 @@
+.env
+db.sqlite3
+__pycache__/
+*.pyc
+*.pyo
+media/
+logs/
+venv/
+*.pytest_cache
+static/
+staticfiles/
+*.pdf
+invoice_pdfs/
+*.pem
+*celerybeat-schedule
