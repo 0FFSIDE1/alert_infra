@@ -14,7 +14,14 @@ DEFAULTS: dict[str, Any] = {
     "ENABLED": True,
     "DEFAULT_SEVERITY": "error",
     "REDACT_SENSITIVE_DATA": True,
-    "EMAIL": {"ENABLED": False, "BACKEND": "django"},
+    "EMAIL": {
+        "ENABLED": False,
+        "BACKEND": "django",
+        "SUBJECT_TEMPLATE": None,
+        "BODY_TEMPLATE": None,
+        "HTML_TEMPLATE": None,
+        "TEMPLATE_CONTEXT": {},
+    },
     "SLACK": {"ENABLED": False},
     "TELEGRAM": {"ENABLED": False},
 }
@@ -38,8 +45,10 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
 
 def get_alert_infra_settings() -> dict[str, Any]:
     settings = _get_django_settings()
-    configured = getattr(settings, "ALERT_INFRA", {}) or {}
-    return _merge(DEFAULTS, configured)
+    configured = getattr(settings, "ALERT_INFRA", None)
+    if configured is None:
+        configured = getattr(settings, "FEATURE_FLAG_INFRA", {})
+    return _merge(DEFAULTS, configured or {})
 
 
 def _list(value: Any) -> list[str]:
@@ -75,7 +84,17 @@ def build_dispatcher(config: dict[str, Any] | None = None) -> AlertDispatcher:
                 )
             )
         else:
-            transports.append(DjangoEmailTransport(from_email=from_email or "", to_emails=to_emails))
+            transports.append(
+                DjangoEmailTransport(
+                    from_email=from_email or "",
+                    to_emails=to_emails,
+                    timeout=float(email.get("TIMEOUT", 8.0)),
+                    subject_template_name=email.get("SUBJECT_TEMPLATE") or email.get("SUBJECT_TEMPLATE_NAME"),
+                    body_template_name=email.get("BODY_TEMPLATE") or email.get("BODY_TEMPLATE_NAME"),
+                    html_template_name=email.get("HTML_TEMPLATE") or email.get("HTML_TEMPLATE_NAME"),
+                    template_context=email.get("TEMPLATE_CONTEXT"),
+                )
+            )
 
     slack = cfg.get("SLACK", {}) or {}
     if slack.get("ENABLED"):

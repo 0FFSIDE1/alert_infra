@@ -16,7 +16,8 @@
 - Built-in no-op, SMTP email, Django email backend, Slack webhook, and Telegram bot transports.
 - Multi-transport `AlertDispatcher` with safe partial-failure handling.
 - Automatic sensitive metadata redaction for keys such as `password`, `token`, `secret`, `api_key`, `authorization`, `cookie`, `session`, `csrf`, `access`, `refresh`, and `private_key`.
-- Django settings adapter and `send_alert` helper that do not affect plain Python imports.
+- Django settings adapter, template-aware Django email transport, and `send_alert` helper that do not affect plain Python imports.
+- Compatibility imports and Django settings alias for projects using the `feature_flag_infra` namespace.
 
 ## Installation
 
@@ -60,6 +61,11 @@ ALERT_INFRA = {
         "ENABLED": True,
         "FROM_EMAIL": env("ALERT_FROM_EMAIL"),
         "TO_EMAILS": env.list("ALERT_TO_EMAILS"),
+        # Optional Django template names for rendered alert emails.
+        "SUBJECT_TEMPLATE": "emails/alert_subject.txt",
+        "BODY_TEMPLATE": "emails/alert.txt",
+        "HTML_TEMPLATE": "emails/alert.html",
+        "TEMPLATE_CONTEXT": {"product_name": "Billing"},
     },
     "SLACK": {
         "ENABLED": True,
@@ -117,6 +123,10 @@ email_transport = SMTPEmailTransport.from_env()
 ```
 
 Use the Django email backend by enabling email without `BACKEND="smtp"` in `ALERT_INFRA`. The package will call Django's configured email backend from the Django adapter.
+
+Django email rendering can use your project templates by setting `SUBJECT_TEMPLATE`, `BODY_TEMPLATE`, and/or `HTML_TEMPLATE` under `ALERT_INFRA["EMAIL"]`. Templates receive `alert`, `alert_dict`, `metadata`, `tags`, and any values from `TEMPLATE_CONTEXT`. If no templates are configured, the transport falls back to the built-in alert subject/body formatting.
+
+Projects that need the `feature_flag_infra` namespace can import the same API from `feature_flag_infra` or `feature_flag_infra.django`. Django settings may also be supplied as `FEATURE_FLAG_INFRA` when `ALERT_INFRA` is not defined.
 
 ## Slack setup
 

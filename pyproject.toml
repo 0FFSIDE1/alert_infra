@@ -18,7 +18,7 @@ dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["alert_infra*"]
+include = ["alert_infra*", "feature_flag_infra*"]
 exclude = ["tests*"]
 
 [tool.setuptools]
