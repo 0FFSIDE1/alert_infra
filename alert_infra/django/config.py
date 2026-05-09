@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from alert_infra import AlertDispatcher, NoOpTransport
+from alert_infra.celery import CeleryAlertDispatcher
 from alert_infra.apps import SlackWebhookTransport, TelegramBotTransport
 from alert_infra.email import SMTPEmailTransport
 from .email import DjangoEmailTransport
@@ -14,6 +15,17 @@ DEFAULTS: dict[str, Any] = {
     "ENABLED": True,
     "DEFAULT_SEVERITY": "error",
     "REDACT_SENSITIVE_DATA": True,
+    "ASYNC": {
+        "ENABLED": False,
+        "BACKEND": "celery",
+        "TASK_NAME": "alert_infra.dispatch_alert",
+        "QUEUE": "alerts",
+        "MAX_RETRIES": 3,
+        "RETRY_BACKOFF": True,
+        "RETRY_BACKOFF_MAX": 300,
+        "RETRY_JITTER": True,
+        "FAIL_SILENTLY": True,
+    },
     "EMAIL": {
         "ENABLED": False,
         "BACKEND": "django",
@@ -110,3 +122,9 @@ def build_dispatcher(config: dict[str, Any] | None = None) -> AlertDispatcher:
     if not transports:
         transports.append(NoOpTransport())
     return AlertDispatcher(transports, enabled=True)
+
+
+def build_async_dispatcher(config: dict[str, Any] | None = None) -> CeleryAlertDispatcher:
+    """Build the optional Celery enqueueing dispatcher from Django settings."""
+    cfg = config or get_alert_infra_settings()
+    return CeleryAlertDispatcher(config=cfg.get("ASYNC", {}))

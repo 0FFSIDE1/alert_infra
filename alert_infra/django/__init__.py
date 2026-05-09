@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from alert_infra import Alert
 from alert_infra.transports import DeliveryResult
-from .config import build_dispatcher, get_alert_infra_settings
+from .config import build_async_dispatcher, build_dispatcher, get_alert_infra_settings
 from .email import DjangoEmailTransport
 from .context import request_metadata
 
@@ -40,7 +40,17 @@ def send_alert(
         request_id=request_id,
         redact_sensitive_data=bool(cfg.get("REDACT_SENSITIVE_DATA", True)),
     )
+    async_cfg = cfg.get("ASYNC", {}) or {}
+    if cfg.get("ENABLED", True) and async_cfg.get("ENABLED"):
+        return build_async_dispatcher(cfg).send(alert)
     return build_dispatcher(cfg).send(alert)
 
 
-__all__ = ["DjangoEmailTransport", "build_dispatcher", "get_alert_infra_settings", "request_metadata", "send_alert"]
+__all__ = [
+    "DjangoEmailTransport",
+    "build_async_dispatcher",
+    "build_dispatcher",
+    "get_alert_infra_settings",
+    "request_metadata",
+    "send_alert",
+]

@@ -8,7 +8,7 @@ from email.message import EmailMessage
 from typing import Callable, Sequence
 
 from alert_infra.alert import Alert
-from alert_infra.exceptions import AlertConfigurationError, AlertDeliveryError
+from alert_infra.exceptions import AlertConfigurationError, NonRetryableAlertTransportError, RetryableAlertTransportError
 
 EmailSender = Callable[[Sequence[str], str, str, str], None]
 
@@ -115,5 +115,18 @@ class SMTPEmailTransport:
         html = "<br>".join(body.splitlines())
         try:
             self.sender(self.to_emails, subject, body, html)
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise NonRetryableAlertTransportError("SMTP email recipient rejected") from exc
+        except smtplib.SMTPDataError as exc:
+            code = int(getattr(exc, "smtp_code", 0) or 0)
+            if 400 <= code < 500:
+                raise RetryableAlertTransportError("SMTP email temporary data failure") from exc
+            raise NonRetryableAlertTransportError("SMTP email permanent data failure") from exc
+        except (TimeoutError, OSError, smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError) as exc:
+            raise RetryableAlertTransportError("SMTP email alert delivery failed") from exc
+        except smtplib.SMTPAuthenticationError as exc:
+            raise NonRetryableAlertTransportError("SMTP email authentication failed") from exc
+        except smtplib.SMTPException as exc:
+            raise RetryableAlertTransportError("SMTP email alert delivery failed") from exc
         except Exception as exc:  # noqa: BLE001
-            raise AlertDeliveryError("SMTP email alert delivery failed") from exc
+            raise RetryableAlertTransportError("SMTP email alert delivery failed") from exc

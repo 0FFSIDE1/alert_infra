@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from alert_infra.alert import Alert
-from alert_infra.exceptions import AlertConfigurationError, AlertDeliveryError
+from alert_infra.exceptions import AlertConfigurationError, AlertTransportError, RetryableAlertTransportError
 from .http import HttpClient, UrllibHttpClient, validate_https_url
 
 
@@ -44,6 +44,6 @@ class SlackWebhookTransport:
         try:
             self.http_client.post(self.webhook_url, json=self.build_payload(alert), timeout=self.timeout)
         except Exception as exc:  # noqa: BLE001
-            if isinstance(exc, AlertDeliveryError):
+            if isinstance(exc, AlertTransportError):
                 raise
-            raise AlertDeliveryError("Slack alert delivery failed") from exc
+            raise RetryableAlertTransportError("Slack alert delivery failed") from exc

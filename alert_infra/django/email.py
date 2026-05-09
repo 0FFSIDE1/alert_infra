@@ -6,7 +6,7 @@ from typing import Any, Mapping, Sequence
 
 from alert_infra.alert import Alert
 from alert_infra.email.transports import format_alert_body, format_alert_subject
-from alert_infra.exceptions import AlertConfigurationError, AlertDeliveryError
+from alert_infra.exceptions import AlertConfigurationError, RetryableAlertTransportError
 
 
 class DjangoEmailTransport:
@@ -89,4 +89,4 @@ class DjangoEmailTransport:
         try:
             email.send(fail_silently=False)
         except Exception as exc:  # noqa: BLE001
-            raise AlertDeliveryError("Django email alert delivery failed") from exc
+            raise RetryableAlertTransportError("Django email alert delivery failed") from exc
