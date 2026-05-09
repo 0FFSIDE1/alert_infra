@@ -38,6 +38,7 @@ redis = ["redis>=4"]
 legacy-email = ["requests", "sendgrid", "resend"]
 dev = [
     "django>=4.2",
+    "celery>=5",
     "pytest",
     "pytest-django",
     "pytest-mock",

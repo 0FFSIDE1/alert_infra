@@ -114,3 +114,53 @@ def test_telegram_timeout_failure() -> None:
 
     with pytest.raises(AlertDeliveryError):
         transport.send(Alert(title="title", message="body"))
+
+
+def test_slack_5xx_failure_is_retryable() -> None:
+    from alert_infra.exceptions import RetryableAlertTransportError
+
+    transport = SlackWebhookTransport(
+        "https://hooks.slack.com/services/test",
+        http_client=MockHttpClient(RetryableAlertTransportError("HTTP alert delivery failed with status 503")),
+    )
+
+    with pytest.raises(RetryableAlertTransportError):
+        transport.send(Alert(title="title", message="body"))
+
+
+def test_slack_4xx_failure_is_non_retryable() -> None:
+    from alert_infra.exceptions import NonRetryableAlertTransportError
+
+    transport = SlackWebhookTransport(
+        "https://hooks.slack.com/services/test",
+        http_client=MockHttpClient(NonRetryableAlertTransportError("HTTP alert delivery failed with status 401")),
+    )
+
+    with pytest.raises(NonRetryableAlertTransportError):
+        transport.send(Alert(title="title", message="body"))
+
+
+def test_telegram_5xx_failure_is_retryable() -> None:
+    from alert_infra.exceptions import RetryableAlertTransportError
+
+    transport = TelegramBotTransport(
+        "123",
+        "456",
+        http_client=MockHttpClient(RetryableAlertTransportError("HTTP alert delivery failed with status 500")),
+    )
+
+    with pytest.raises(RetryableAlertTransportError):
+        transport.send(Alert(title="title", message="body"))
+
+
+def test_telegram_4xx_failure_is_non_retryable() -> None:
+    from alert_infra.exceptions import NonRetryableAlertTransportError
+
+    transport = TelegramBotTransport(
+        "123",
+        "456",
+        http_client=MockHttpClient(NonRetryableAlertTransportError("HTTP alert delivery failed with status 400")),
+    )
+
+    with pytest.raises(NonRetryableAlertTransportError):
+        transport.send(Alert(title="title", message="body"))

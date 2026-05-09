@@ -11,6 +11,7 @@ from alert_infra import __all__ as _alert_infra_all
 _ALIAS_MODULES = (
     "alert",
     "apps",
+    "celery",
     "django",
     "email",
     "exceptions",

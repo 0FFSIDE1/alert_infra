@@ -7,7 +7,7 @@ import urllib.request
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
-from alert_infra.exceptions import AlertConfigurationError, AlertDeliveryError
+from alert_infra.exceptions import AlertConfigurationError, NonRetryableAlertTransportError, RetryableAlertTransportError
 
 
 class HttpClient(Protocol):
@@ -36,8 +36,12 @@ class UrllibHttpClient:
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - URL is validated by transports.
                 status = int(response.getcode())
+        except urllib.error.HTTPError as exc:
+            status = int(getattr(exc, "code", 0) or 0)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise AlertDeliveryError("HTTP alert delivery failed") from exc
-        if status >= 400:
-            raise AlertDeliveryError(f"HTTP alert delivery failed with status {status}")
+            raise RetryableAlertTransportError("HTTP alert delivery failed") from exc
+        if 400 <= status < 500:
+            raise NonRetryableAlertTransportError(f"HTTP alert delivery failed with status {status}")
+        if status >= 500:
+            raise RetryableAlertTransportError(f"HTTP alert delivery failed with status {status}")
         return status

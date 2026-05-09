@@ -1009,3 +1009,147 @@ python -m build
 ```
 
 The project uses `setuptools` and `setuptools-scm` for packaging and dynamic versioning.
+
+## Async alerting with Celery
+
+`alert_infra` can enqueue outbound alert delivery to Celery while keeping the core package framework-independent. Celery is an optional extra; importing `alert_infra` or using the synchronous dispatcher does not import Celery.
+
+Install Celery support when you want queued dispatch:
+
+```bash
+pip install "alert-infra[celery]"
+```
+
+The async layer serializes an `Alert` with `Alert.to_dict()`, redacts sensitive metadata before queueing, and rehydrates it with `Alert.from_dict()` inside the worker. Transport credentials remain in settings/environment on the worker; they are not passed as task arguments.
+
+### Django Celery setup
+
+Add the task module to your normal Celery autodiscovery path. If your project autodiscovers installed apps, include `alert_infra.django` in `INSTALLED_APPS`; otherwise import `alert_infra.django.tasks` from your Celery app module.
+
+```python
+# config/celery.py
+import os
+from celery import Celery
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
+app = Celery("config")
+app.config_from_object("django.conf:settings", namespace="CELERY")
+app.autodiscover_tasks()
+```
+
+```python
+# settings.py
+INSTALLED_APPS = [
+    # ...
+    "alert_infra.django",
+]
+
+ALERT_INFRA = {
+    "ENABLED": True,
+    "ASYNC": {
+        "ENABLED": True,
+        "BACKEND": "celery",
+        "TASK_NAME": "alert_infra.dispatch_alert",
+        "QUEUE": "alerts",
+        "MAX_RETRIES": 3,
+        "RETRY_BACKOFF": True,
+        "RETRY_BACKOFF_MAX": 300,
+        "RETRY_JITTER": True,
+        "FAIL_SILENTLY": True,
+    },
+    "EMAIL": {
+        "ENABLED": True,
+        "FROM_EMAIL": env("ALERT_FROM_EMAIL"),
+        "TO_EMAILS": env.list("ALERT_TO_EMAILS"),
+    },
+    "SLACK": {
+        "ENABLED": True,
+        "WEBHOOK_URL": env("ALERT_SLACK_WEBHOOK_URL"),
+    },
+    "TELEGRAM": {
+        "ENABLED": True,
+        "BOT_TOKEN": env("ALERT_TELEGRAM_BOT_TOKEN"),
+        "CHAT_ID": env("ALERT_TELEGRAM_CHAT_ID"),
+    },
+}
+
+CELERY_TASK_ROUTES = {
+    "alert_infra.dispatch_alert": {"queue": "alerts"},
+}
+```
+
+Run a worker for the alerts queue:
+
+```bash
+celery -A config worker -Q alerts -l info
+```
+
+When `ALERT_INFRA["ASYNC"]["ENABLED"]` is true, `alert_infra.django.send_alert(...)` enqueues `alert_infra.dispatch_alert` and returns a `DeliveryResult` with `sent=("celery",)`. When async is disabled, it uses the synchronous `AlertDispatcher` exactly as before. If Celery is unavailable or not configured, `FAIL_SILENTLY=True` returns a failed `DeliveryResult` instead of crashing the request; set `FAIL_SILENTLY=False` to raise a clear configuration error.
+
+### Async settings reference
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `ENABLED` | `False` | Enable Celery-backed alert dispatch from the Django helper. |
+| `BACKEND` | `"celery"` | Async backend. Currently only Celery is supported. |
+| `TASK_NAME` | `"alert_infra.dispatch_alert"` | Celery task name to enqueue. |
+| `QUEUE` | `"alerts"` | Queue passed to `send_task`/`apply_async`. |
+| `MAX_RETRIES` | `3` | Maximum worker retries for retryable transport failures. |
+| `RETRY_BACKOFF` | `True` | Use bounded exponential retry countdowns, or an integer base delay. |
+| `RETRY_BACKOFF_MAX` | `300` | Maximum retry countdown in seconds. |
+| `RETRY_JITTER` | `True` | Randomize retry countdowns to avoid thundering herds. |
+| `FAIL_SILENTLY` | `True` | Do not crash web requests when enqueueing fails. |
+
+### Retry and partial-failure behavior
+
+Celery retries are explicit so successful transports are not resent unnecessarily. The task dispatches to all configured transports on the first attempt. If, for example, email succeeds and Slack has a retryable timeout, the retry is scheduled with `transport_names=["slack"]`; email is omitted from the retry. Non-retryable configuration/authentication errors are reported in the task result and are not retried.
+
+Retryable examples include network errors, timeouts, SMTP connection/disconnection failures, SMTP 4xx temporary data errors, and webhook 5xx responses. Non-retryable examples include missing SMTP settings, invalid Slack webhook URLs, invalid Telegram chat IDs/tokens, invalid recipients, authentication/configuration failures, unsupported severities, and webhook 4xx responses.
+
+Task logs and dispatcher logs contain transport names and exception class names only. They do not include webhook URLs, bot tokens, SMTP passwords, raw authorization headers, cookies, or metadata values.
+
+### Plain Python synchronous usage
+
+Plain Python applications can continue using the synchronous dispatcher without Celery:
+
+```python
+from alert_infra import Alert, AlertDispatcher
+from alert_infra.apps import SlackWebhookTransport
+
+sync_dispatcher = AlertDispatcher([SlackWebhookTransport.from_env()])
+sync_dispatcher.send(Alert(title="API outage", message="Health checks failed."))
+```
+
+### Plain Python Celery usage
+
+Plain Python applications can opt into Celery by passing either a Celery app or a task-like object with `apply_async` to `CeleryAlertDispatcher`:
+
+```python
+from celery import Celery
+from alert_infra import Alert
+from alert_infra.celery import CeleryAlertDispatcher
+
+app = Celery("alerts")
+async_dispatcher = CeleryAlertDispatcher(
+    celery_app=app,
+    config={
+        "TASK_NAME": "alert_infra.dispatch_alert",
+        "QUEUE": "alerts",
+        "MAX_RETRIES": 3,
+        "FAIL_SILENTLY": False,
+    },
+)
+
+async_dispatcher.send(Alert(title="Import failed", message="Supplier import exited with status 1."))
+```
+
+For non-Django plain Python workers, define your own Celery task that receives the serialized payload, calls `Alert.from_dict(payload)`, and dispatches with your application-specific `AlertDispatcher`.
+
+### Testing async alerting
+
+Use the repository test suite to exercise serialization, Django settings loading, async enqueueing, task rehydration, retry behavior, partial failures, and transport error classification:
+
+```bash
+python -m pytest
+```
