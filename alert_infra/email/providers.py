@@ -1,8 +1,10 @@
-"""Legacy Resend, SendGrid, and SMTP provider adapters.
+"""Legacy template-email provider adapters.
 
-These adapters are used only by ``alert_infra.email.services.EmailService``
-and the legacy ``send_notify_email_task`` task. They are intentionally not
-wired into ``AlertDispatcher`` or ``alert_infra.django.build_dispatcher``.
+The active alert dispatcher uses ``ResendEmailTransport``,
+``SendGridEmailTransport``, and ``SMTPEmailTransport`` from
+``alert_infra.email.transports``. These adapters remain only for older callers
+of ``alert_infra.email.services.EmailService`` and the legacy
+``send_notify_email_task`` task.
 """
 
 from .interfaces import EmailProvider

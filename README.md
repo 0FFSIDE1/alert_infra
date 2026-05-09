@@ -33,8 +33,10 @@ Key capabilities:
 - Safe partial-failure handling: one broken transport does not prevent other transports from receiving the alert.
 - Built-in transports for:
   - No-op/in-memory delivery.
-  - SMTP email.
-  - Django email backend.
+  - Resend email API.
+  - SendGrid Mail Send API.
+  - SMTP email fallback.
+  - Django email backend for projects that explicitly opt into Django's mail backend.
   - Slack incoming webhooks.
   - Telegram Bot API messages.
 - Django settings adapter and `send_alert` helper.
@@ -50,7 +52,7 @@ The codebase is split into framework-neutral modules and optional integration mo
 | `alert_infra.alert` | Core `Alert` dataclass and severity validation. |
 | `alert_infra.security` | Recursive metadata redaction helpers. |
 | `alert_infra.transports` | Transport protocol, delivery result, no-op transport, and dispatcher. |
-| `alert_infra.email` | Framework-agnostic SMTP email transport and email formatting helpers. |
+| `alert_infra.email` | Framework-agnostic Resend, SendGrid, SMTP email transports and email formatting helpers. |
 | `alert_infra.apps` | Application/webhook transports such as Slack and Telegram. |
 | `alert_infra.django` | Django settings loader, Django email transport, request context helper, and `send_alert`. |
 | `feature_flag_infra` | Compatibility namespace that re-exports the same public API. |
@@ -65,7 +67,7 @@ Typical flow:
 
 ## Installation
 
-Install the base package for plain Python, SMTP, Slack, and Telegram usage:
+Install the base package for plain Python, Resend, SendGrid, SMTP, Slack, and Telegram usage:
 
 ```bash
 pip install alert-infra
@@ -85,9 +87,10 @@ still imports `alert_infra.email.tasks`, `alert_infra.email.services`, or
 pip install "alert-infra[legacy-email]"
 ```
 
-The legacy extra installs `requests` and `sendgrid`. Resend delivery in that
-legacy path calls the Resend HTTP API through `requests`; it does not use the
-`resend` Python SDK.
+The active Resend and SendGrid alert transports use the providers' HTTP APIs
+through Python's standard library, so no provider SDK is required. The legacy
+extra installs `requests` and `sendgrid` only for older code that imports the
+legacy template-email path directly.
 
 For local development from this repository:
 
@@ -190,6 +193,50 @@ result = dispatcher.send(
 )
 
 print(result.sent)  # ("noop",)
+```
+
+### Resend email from environment variables
+
+Set environment variables:
+
+```bash
+export ALERT_FROM_EMAIL=alerts@example.com
+export ALERT_TO_EMAILS=ops@example.com,security@example.com
+export ALERT_RESEND_API_KEY='from-secret-manager'
+```
+
+Send an email alert through Resend without installing the Resend SDK:
+
+```python
+from alert_infra import Alert, AlertDispatcher
+from alert_infra.email import ResendEmailTransport
+
+email_transport = ResendEmailTransport.from_env()
+dispatcher = AlertDispatcher([email_transport])
+
+dispatcher.send(Alert(title="Payment failure", message="Payment provider returned HTTP 500."))
+```
+
+### SendGrid email from environment variables
+
+Set environment variables:
+
+```bash
+export ALERT_FROM_EMAIL=alerts@example.com
+export ALERT_TO_EMAILS=ops@example.com,security@example.com
+export ALERT_SENDGRID_API_KEY='from-secret-manager'
+```
+
+Send an email alert through SendGrid without installing the SendGrid SDK:
+
+```python
+from alert_infra import Alert, AlertDispatcher
+from alert_infra.email import SendGridEmailTransport
+
+email_transport = SendGridEmailTransport.from_env()
+dispatcher = AlertDispatcher([email_transport])
+
+dispatcher.send(Alert(title="Payment failure", message="Payment provider returned HTTP 500."))
 ```
 
 ### SMTP email from environment variables
@@ -401,8 +448,12 @@ ALERT_INFRA = {
     "REDACT_SENSITIVE_DATA": True,
     "EMAIL": {
         "ENABLED": True,
+        # BACKEND defaults to "auto": Resend when configured, then SendGrid, then SMTP.
         "FROM_EMAIL": env("ALERT_FROM_EMAIL"),
         "TO_EMAILS": env.list("ALERT_TO_EMAILS"),
+        "RESEND_API_KEY": env("ALERT_RESEND_API_KEY", default=""),
+        "SENDGRID_API_KEY": env("ALERT_SENDGRID_API_KEY", default=""),
+        "SMTP_HOST": env("ALERT_SMTP_HOST", default=""),
     },
     "SLACK": {
         "ENABLED": True,
@@ -498,9 +549,36 @@ def process_invoice(self, invoice_id):
         raise
 ```
 
+### Django email provider selection
+
+When `EMAIL["BACKEND"]` is omitted or set to `"auto"`, `alert_infra` chooses the first configured provider in this order:
+
+1. Resend when `RESEND_API_KEY` or `ALERT_RESEND_API_KEY` is present.
+2. SendGrid when `SENDGRID_API_KEY` or `ALERT_SENDGRID_API_KEY` is present.
+3. Direct SMTP as the fallback when neither provider API key is configured.
+
+Use `BACKEND="resend"`, `BACKEND="sendgrid"`, `BACKEND="smtp"`, or `BACKEND="django"` to force a provider.
+
+```python
+ALERT_INFRA = {
+    "EMAIL": {
+        "ENABLED": True,
+        "BACKEND": "auto",
+        "FROM_EMAIL": "alerts@example.com",
+        "TO_EMAILS": ["ops@example.com"],
+        "RESEND_API_KEY": env("ALERT_RESEND_API_KEY", default=""),
+        "SENDGRID_API_KEY": env("ALERT_SENDGRID_API_KEY", default=""),
+        "SMTP_HOST": env("ALERT_SMTP_HOST", default=""),
+        "SMTP_PORT": env.int("ALERT_SMTP_PORT", default=587),
+        "SMTP_USERNAME": env("ALERT_SMTP_USERNAME", default=""),
+        "SMTP_PASSWORD": env("ALERT_SMTP_PASSWORD", default=""),
+    }
+}
+```
+
 ### Django email backend configuration
 
-When `EMAIL["BACKEND"]` is omitted or set to `"django"`, `alert_infra` uses Django's configured email backend through `EmailMultiAlternatives`.
+Set `EMAIL["BACKEND"]` to `"django"` when you want `alert_infra` to use Django's configured email backend through `EmailMultiAlternatives`.
 
 ```python
 # settings.py
@@ -523,7 +601,7 @@ ALERT_INFRA = {
 
 ### Django with direct SMTP transport
 
-Use the direct SMTP transport instead of Django's email backend by setting `EMAIL["BACKEND"]` to `"smtp"` or by providing `SMTP_HOST`.
+Use the direct SMTP transport by setting `EMAIL["BACKEND"]` to `"smtp"`, or let `BACKEND="auto"` fall back to SMTP when neither Resend nor SendGrid API keys are configured.
 
 ```python
 ALERT_INFRA = {
@@ -550,6 +628,7 @@ Django email alerts can use project templates for the subject, text body, and HT
 ALERT_INFRA = {
     "EMAIL": {
         "ENABLED": True,
+        "BACKEND": "django",
         "FROM_EMAIL": "alerts@example.com",
         "TO_EMAILS": ["ops@example.com"],
         "SUBJECT_TEMPLATE": "alerts/email_subject.txt",
@@ -599,21 +678,11 @@ Correlation ID: {{ alert.correlation_id }}
 
 The subject renderer collapses line breaks so email subjects remain single-line.
 
-### Resend and SendGrid status
+### Resend, SendGrid, and SMTP fallback
 
-The active alert email integrations are:
+Resend and SendGrid are first-class alert email transports. In Django `auto` mode, configure `RESEND_API_KEY` to use Resend, configure `SENDGRID_API_KEY` to use SendGrid, or omit both API keys to fall back to direct SMTP. The SMTP fallback still requires `SMTP_HOST`, sender, and recipients.
 
-- `SMTPEmailTransport` for framework-agnostic SMTP delivery.
-- `DjangoEmailTransport` for Django's configured email backend.
-
-Resend and SendGrid code exists only in the legacy template-email path under
-`alert_infra.email.helper`, `alert_infra.email.providers`,
-`alert_infra.email.services`, and `alert_infra.email.tasks`. That path is not
-used by `AlertDispatcher`, `send_alert`, or `alert_infra.django.build_dispatcher`,
-and `ALERT_INFRA["EMAIL"]["BACKEND"]` does not accept `"resend"` or
-`"sendgrid"`. Use `BACKEND="django"` or `BACKEND="smtp"` for supported alert
-email delivery, or implement a custom transport if a project needs Resend or
-SendGrid in the dispatcher.
+All email transports support test-safe injection points: Resend and SendGrid accept an `http_client`, while SMTP accepts a `sender` callable. Use those mocks in tests to prevent real email delivery and accidental spam.
 
 ### Django settings reference
 
@@ -633,11 +702,15 @@ Email settings:
 | Key | Description |
 | --- | --- |
 | `ENABLED` | Enable email delivery. |
-| `BACKEND` | `"django"` for Django email backend or `"smtp"` for direct SMTP. Resend and SendGrid are not dispatcher backends. |
+| `BACKEND` | `"auto"` (default), `"resend"`, `"sendgrid"`, `"smtp"`, or `"django"`. Auto prefers Resend, then SendGrid, then SMTP fallback. |
 | `FROM_EMAIL` | Sender address. Falls back to `ALERT_FROM_EMAIL`. |
 | `TO_EMAILS` | Recipient list or comma-separated string. Falls back to `ALERT_TO_EMAILS`. |
 | `TIMEOUT` | Delivery timeout in seconds. |
-| `SMTP_HOST` | SMTP hostname for direct SMTP mode. Falls back to `ALERT_SMTP_HOST`. |
+| `RESEND_API_KEY` | Resend API key. Falls back to `ALERT_RESEND_API_KEY`. |
+| `RESEND_API_URL` | Optional Resend API URL override. |
+| `SENDGRID_API_KEY` | SendGrid API key. Falls back to `ALERT_SENDGRID_API_KEY`. |
+| `SENDGRID_API_URL` | Optional SendGrid API URL override. |
+| `SMTP_HOST` | SMTP hostname for direct SMTP mode or auto fallback. Falls back to `ALERT_SMTP_HOST`. |
 | `SMTP_PORT` | SMTP port. Falls back to `ALERT_SMTP_PORT` or `587`. |
 | `SMTP_USERNAME` | SMTP username. Falls back to `ALERT_SMTP_USERNAME`. |
 | `SMTP_PASSWORD` | SMTP password. Falls back to `ALERT_SMTP_PASSWORD`. |
@@ -674,7 +747,9 @@ The built-in transports understand these environment variables:
 | --- | --- | --- |
 | `ALERT_FROM_EMAIL` | SMTP and Django config | Sender email address. |
 | `ALERT_TO_EMAILS` | SMTP and Django config | Comma-separated recipient list. |
-| `ALERT_SMTP_HOST` | SMTP | SMTP host. |
+| `ALERT_RESEND_API_KEY` | Resend | Resend API key for Resend or auto email delivery. |
+| `ALERT_SENDGRID_API_KEY` | SendGrid | SendGrid API key for SendGrid or auto email delivery. |
+| `ALERT_SMTP_HOST` | SMTP | SMTP host. Required when auto email delivery falls back to SMTP. |
 | `ALERT_SMTP_PORT` | SMTP | SMTP port. Defaults to `587`. |
 | `ALERT_SMTP_USERNAME` | SMTP | SMTP username. |
 | `ALERT_SMTP_PASSWORD` | SMTP | SMTP password. |
@@ -840,6 +915,39 @@ def test_dispatches_alert():
     assert transport.alerts[0].title == "Test"
 ```
 
+### Test Resend or SendGrid without sending email
+
+```python
+from alert_infra import Alert
+from alert_infra.email import ResendEmailTransport
+
+
+class MockHttpClient:
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, *, json, headers=None, timeout):
+        self.calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        return 200
+
+
+def test_resend_payload():
+    client = MockHttpClient()
+    transport = ResendEmailTransport(
+        api_key="test-key",
+        from_email="alerts@example.com",
+        to_emails=["ops@example.com"],
+        http_client=client,
+    )
+
+    transport.send(Alert(title="Payment failed", message="Failed", metadata={"api_key": "secret"}))
+
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer test-key"
+    assert "secret" not in str(client.calls[0]["json"])
+```
+
+Use the same `http_client` pattern with `SendGridEmailTransport`.
+
 ### Test SMTP without connecting to an SMTP server
 
 ```python
@@ -981,14 +1089,16 @@ Methods:
 ### Email API
 
 ```python
-from alert_infra.email import SMTPEmailTransport, format_alert_body, format_alert_subject
+from alert_infra.email import (
+    ResendEmailTransport,
+    SendGridEmailTransport,
+    SMTPEmailTransport,
+    format_alert_body,
+    format_alert_subject,
+)
 ```
 
-`SMTPEmailTransport.from_env(prefix="ALERT_SMTP_")` reads SMTP-related environment variables.
-
-Resend and SendGrid are not exported from the public email API and are not used
-by the alert dispatcher; they remain in legacy modules for direct callers of the
-older Celery/template-email workflow.
+`ResendEmailTransport.from_env(prefix="ALERT_RESEND_")` reads Resend API settings, `SendGridEmailTransport.from_env(prefix="ALERT_SENDGRID_")` reads SendGrid API settings, and `SMTPEmailTransport.from_env(prefix="ALERT_SMTP_")` reads SMTP-related environment variables.
 
 ### App/webhook API
 
@@ -1092,8 +1202,12 @@ ALERT_INFRA = {
     },
     "EMAIL": {
         "ENABLED": True,
+        # BACKEND defaults to "auto": Resend when configured, then SendGrid, then SMTP.
         "FROM_EMAIL": env("ALERT_FROM_EMAIL"),
         "TO_EMAILS": env.list("ALERT_TO_EMAILS"),
+        "RESEND_API_KEY": env("ALERT_RESEND_API_KEY", default=""),
+        "SENDGRID_API_KEY": env("ALERT_SENDGRID_API_KEY", default=""),
+        "SMTP_HOST": env("ALERT_SMTP_HOST", default=""),
     },
     "SLACK": {
         "ENABLED": True,

@@ -5,7 +5,7 @@ import pytest
 from alert_infra import Alert, REDACTED
 from alert_infra.apps import SlackWebhookTransport, TelegramBotTransport
 from alert_infra.exceptions import AlertConfigurationError, AlertDeliveryError
-from alert_infra.email import SMTPEmailTransport
+from alert_infra.email import ResendEmailTransport, SMTPEmailTransport, SendGridEmailTransport
 
 
 class MockHttpClient:
@@ -57,6 +57,58 @@ def test_email_transport_wraps_sender_failure() -> None:
 def test_email_transport_missing_credentials() -> None:
     with pytest.raises(AlertConfigurationError):
         SMTPEmailTransport(host="", from_email="a@example.com", to_emails=["b@example.com"])
+
+
+def test_resend_transport_posts_mocked_api_payload() -> None:
+    client = MockHttpClient()
+    transport = ResendEmailTransport(
+        api_key="resend-key",
+        from_email="alerts@example.com",
+        to_emails=["ops@example.com"],
+        http_client=client,
+    )
+
+    transport.send(Alert(title="Payment failure", message="Failed", metadata={"api_key": "secret"}))
+
+    call = client.calls[0]
+    assert call["url"] == "https://api.resend.com/emails"
+    assert call["headers"]["Authorization"] == "Bearer resend-key"
+    assert call["json"]["to"] == ["ops@example.com"]
+    assert call["json"]["subject"] == "[ERROR] Payment failure"
+    assert REDACTED in call["json"]["text"]
+    assert "secret" not in str(call["json"])
+
+
+def test_sendgrid_transport_posts_mocked_api_payload() -> None:
+    client = MockHttpClient()
+    transport = SendGridEmailTransport(
+        api_key="sendgrid-key",
+        from_email="alerts@example.com",
+        to_emails=["ops@example.com"],
+        http_client=client,
+    )
+
+    transport.send(Alert(title="Payment failure", message="Failed", metadata={"api_key": "secret"}))
+
+    call = client.calls[0]
+    assert call["url"] == "https://api.sendgrid.com/v3/mail/send"
+    assert call["headers"]["Authorization"] == "Bearer sendgrid-key"
+    assert call["json"]["personalizations"][0]["to"] == [{"email": "ops@example.com"}]
+    assert call["json"]["subject"] == "[ERROR] Payment failure"
+    assert REDACTED in call["json"]["content"][0]["value"]
+    assert "secret" not in str(call["json"])
+
+
+def test_resend_transport_wraps_mocked_network_failure() -> None:
+    transport = ResendEmailTransport(
+        api_key="resend-key",
+        from_email="alerts@example.com",
+        to_emails=["ops@example.com"],
+        http_client=MockHttpClient(TimeoutError("timeout")),
+    )
+
+    with pytest.raises(AlertDeliveryError):
+        transport.send(Alert(title="title", message="body"))
 
 
 def test_slack_transport_posts_redacted_payload() -> None:
