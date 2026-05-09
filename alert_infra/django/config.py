@@ -8,7 +8,7 @@ from typing import Any
 from alert_infra import AlertDispatcher, NoOpTransport
 from alert_infra.celery import CeleryAlertDispatcher
 from alert_infra.apps import SlackWebhookTransport, TelegramBotTransport
-from alert_infra.email import SMTPEmailTransport
+from alert_infra.email import ResendEmailTransport, SMTPEmailTransport, SendGridEmailTransport
 from alert_infra.exceptions import AlertConfigurationError
 from .email import DjangoEmailTransport
 
@@ -29,7 +29,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "EMAIL": {
         "ENABLED": False,
-        "BACKEND": "django",
+        "BACKEND": "auto",
         "SUBJECT_TEMPLATE": None,
         "BODY_TEMPLATE": None,
         "HTML_TEMPLATE": None,
@@ -82,12 +82,45 @@ def build_dispatcher(config: dict[str, Any] | None = None) -> AlertDispatcher:
     if email.get("ENABLED"):
         from_email = email.get("FROM_EMAIL") or os.getenv("ALERT_FROM_EMAIL")
         to_emails = _list(email.get("TO_EMAILS") or os.getenv("ALERT_TO_EMAILS"))
-        backend = str(email.get("BACKEND", "django")).lower()
-        if backend not in {"django", "smtp"}:
+        backend = str(email.get("BACKEND", "auto")).lower()
+        supported_backends = {"auto", "resend", "sendgrid", "smtp", "django"}
+        if backend not in supported_backends:
             raise AlertConfigurationError(
-                f"unsupported email backend {backend!r}; supported alert email backends are 'django' and 'smtp'"
+                f"unsupported email backend {backend!r}; supported alert email backends are 'auto', 'resend', 'sendgrid', 'smtp', and 'django'"
             )
-        if backend == "smtp" or email.get("SMTP_HOST") or os.getenv("ALERT_SMTP_HOST"):
+
+        resend_api_key = email.get("RESEND_API_KEY") or os.getenv("ALERT_RESEND_API_KEY")
+        sendgrid_api_key = email.get("SENDGRID_API_KEY") or os.getenv("ALERT_SENDGRID_API_KEY")
+        if backend == "auto":
+            if resend_api_key:
+                backend = "resend"
+            elif sendgrid_api_key:
+                backend = "sendgrid"
+            else:
+                backend = "smtp"
+
+        timeout = float(email.get("TIMEOUT", 8.0))
+        if backend == "resend":
+            transports.append(
+                ResendEmailTransport(
+                    api_key=resend_api_key or "",
+                    from_email=from_email or "",
+                    to_emails=to_emails,
+                    timeout=timeout,
+                    api_url=email.get("RESEND_API_URL", "https://api.resend.com/emails"),
+                )
+            )
+        elif backend == "sendgrid":
+            transports.append(
+                SendGridEmailTransport(
+                    api_key=sendgrid_api_key or "",
+                    from_email=from_email or "",
+                    to_emails=to_emails,
+                    timeout=timeout,
+                    api_url=email.get("SENDGRID_API_URL", "https://api.sendgrid.com/v3/mail/send"),
+                )
+            )
+        elif backend == "smtp":
             transports.append(
                 SMTPEmailTransport(
                     host=email.get("SMTP_HOST") or os.getenv("ALERT_SMTP_HOST", ""),
@@ -97,7 +130,7 @@ def build_dispatcher(config: dict[str, Any] | None = None) -> AlertDispatcher:
                     username=email.get("SMTP_USERNAME") or os.getenv("ALERT_SMTP_USERNAME"),
                     password=email.get("SMTP_PASSWORD") or os.getenv("ALERT_SMTP_PASSWORD"),
                     use_tls=bool(email.get("SMTP_USE_TLS", True)),
-                    timeout=float(email.get("TIMEOUT", 8.0)),
+                    timeout=timeout,
                 )
             )
         else:
@@ -105,7 +138,7 @@ def build_dispatcher(config: dict[str, Any] | None = None) -> AlertDispatcher:
                 DjangoEmailTransport(
                     from_email=from_email or "",
                     to_emails=to_emails,
-                    timeout=float(email.get("TIMEOUT", 8.0)),
+                    timeout=timeout,
                     subject_template_name=email.get("SUBJECT_TEMPLATE") or email.get("SUBJECT_TEMPLATE_NAME"),
                     body_template_name=email.get("BODY_TEMPLATE") or email.get("BODY_TEMPLATE_NAME"),
                     html_template_name=email.get("HTML_TEMPLATE") or email.get("HTML_TEMPLATE_NAME"),

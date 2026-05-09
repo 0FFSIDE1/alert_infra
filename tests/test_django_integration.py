@@ -6,7 +6,7 @@ from django.test import override_settings
 from alert_infra import NoOpTransport, REDACTED
 from alert_infra.django import build_dispatcher, get_alert_infra_settings, request_metadata, send_alert
 from alert_infra.django import DjangoEmailTransport
-from alert_infra.email import SMTPEmailTransport
+from alert_infra.email import ResendEmailTransport, SMTPEmailTransport, SendGridEmailTransport
 from alert_infra.exceptions import AlertConfigurationError
 
 
@@ -26,17 +26,22 @@ def test_disabled_alerting_mode_uses_disabled_dispatcher() -> None:
     assert isinstance(dispatcher.transports[0], NoOpTransport)
 
 
-def test_build_dispatcher_with_django_email_settings() -> None:
+def test_build_dispatcher_with_auto_resend_email_settings() -> None:
     dispatcher = build_dispatcher(
         {
             "ENABLED": True,
-            "EMAIL": {"ENABLED": True, "FROM_EMAIL": "alerts@example.com", "TO_EMAILS": ["ops@example.com"]},
+            "EMAIL": {
+                "ENABLED": True,
+                "RESEND_API_KEY": "resend-key",
+                "FROM_EMAIL": "alerts@example.com",
+                "TO_EMAILS": ["ops@example.com"],
+            },
             "SLACK": {"ENABLED": False},
             "TELEGRAM": {"ENABLED": False},
         }
     )
 
-    assert isinstance(dispatcher.transports[0], DjangoEmailTransport)
+    assert isinstance(dispatcher.transports[0], ResendEmailTransport)
 
 
 def test_build_dispatcher_with_smtp_email_settings() -> None:
@@ -63,22 +68,41 @@ def test_build_dispatcher_missing_credentials() -> None:
         build_dispatcher({"ENABLED": True, "EMAIL": {"ENABLED": True}, "SLACK": {"ENABLED": False}, "TELEGRAM": {"ENABLED": False}})
 
 
-@pytest.mark.parametrize("backend", ["resend", "sendgrid"])
-def test_build_dispatcher_rejects_legacy_email_provider_names(backend: str) -> None:
-    with pytest.raises(AlertConfigurationError, match="supported alert email backends"):
-        build_dispatcher(
-            {
+def test_build_dispatcher_with_sendgrid_email_settings() -> None:
+    dispatcher = build_dispatcher(
+        {
+            "ENABLED": True,
+            "EMAIL": {
                 "ENABLED": True,
-                "EMAIL": {
-                    "ENABLED": True,
-                    "BACKEND": backend,
-                    "FROM_EMAIL": "alerts@example.com",
-                    "TO_EMAILS": ["ops@example.com"],
-                },
-                "SLACK": {"ENABLED": False},
-                "TELEGRAM": {"ENABLED": False},
-            }
-        )
+                "BACKEND": "sendgrid",
+                "SENDGRID_API_KEY": "sendgrid-key",
+                "FROM_EMAIL": "alerts@example.com",
+                "TO_EMAILS": ["ops@example.com"],
+            },
+            "SLACK": {"ENABLED": False},
+            "TELEGRAM": {"ENABLED": False},
+        }
+    )
+
+    assert isinstance(dispatcher.transports[0], SendGridEmailTransport)
+
+
+def test_build_dispatcher_auto_email_falls_back_to_smtp_without_api_keys() -> None:
+    dispatcher = build_dispatcher(
+        {
+            "ENABLED": True,
+            "EMAIL": {
+                "ENABLED": True,
+                "SMTP_HOST": "smtp.example.com",
+                "FROM_EMAIL": "alerts@example.com",
+                "TO_EMAILS": ["ops@example.com"],
+            },
+            "SLACK": {"ENABLED": False},
+            "TELEGRAM": {"ENABLED": False},
+        }
+    )
+
+    assert isinstance(dispatcher.transports[0], SMTPEmailTransport)
 
 
 class User:
@@ -121,6 +145,7 @@ def test_build_dispatcher_passes_django_email_templates() -> None:
             "ENABLED": True,
             "EMAIL": {
                 "ENABLED": True,
+                "BACKEND": "django",
                 "FROM_EMAIL": "alerts@example.com",
                 "TO_EMAILS": ["ops@example.com"],
                 "SUBJECT_TEMPLATE": "alerts/subject.txt",
@@ -195,7 +220,12 @@ def test_feature_flag_infra_settings_alias_is_supported() -> None:
         ALERT_INFRA=None,
         FEATURE_FLAG_INFRA={
             "ENABLED": True,
-            "EMAIL": {"ENABLED": True, "FROM_EMAIL": "alerts@example.com", "TO_EMAILS": ["ops@example.com"]},
+            "EMAIL": {
+                "ENABLED": True,
+                "SMTP_HOST": "smtp.example.com",
+                "FROM_EMAIL": "alerts@example.com",
+                "TO_EMAILS": ["ops@example.com"],
+            },
         },
     ):
         cfg = get_alert_infra_settings()
