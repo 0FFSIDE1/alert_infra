@@ -9,6 +9,7 @@ from alert_infra import AlertDispatcher, NoOpTransport
 from alert_infra.celery import CeleryAlertDispatcher
 from alert_infra.apps import SlackWebhookTransport, TelegramBotTransport
 from alert_infra.email import SMTPEmailTransport
+from alert_infra.exceptions import AlertConfigurationError
 from .email import DjangoEmailTransport
 
 DEFAULTS: dict[str, Any] = {
@@ -82,6 +83,10 @@ def build_dispatcher(config: dict[str, Any] | None = None) -> AlertDispatcher:
         from_email = email.get("FROM_EMAIL") or os.getenv("ALERT_FROM_EMAIL")
         to_emails = _list(email.get("TO_EMAILS") or os.getenv("ALERT_TO_EMAILS"))
         backend = str(email.get("BACKEND", "django")).lower()
+        if backend not in {"django", "smtp"}:
+            raise AlertConfigurationError(
+                f"unsupported email backend {backend!r}; supported alert email backends are 'django' and 'smtp'"
+            )
         if backend == "smtp" or email.get("SMTP_HOST") or os.getenv("ALERT_SMTP_HOST"):
             transports.append(
                 SMTPEmailTransport(

@@ -35,7 +35,9 @@ local_scheme = "no-local-version"
 django = ["django>=4.2"]
 celery = ["celery>=5"]
 redis = ["redis>=4"]
-legacy-email = ["requests", "sendgrid", "resend"]
+# Legacy provider-chain dependencies for alert_infra.email.tasks/services.
+# Resend delivery uses its HTTP API through requests; the resend SDK is not imported.
+legacy-email = ["requests", "sendgrid"]
 dev = [
     "django>=4.2",
     "celery>=5",

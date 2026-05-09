@@ -1,3 +1,10 @@
+"""Legacy Celery task for template-based notification email.
+
+This task predates the alert transport dispatcher. It can use the legacy
+provider chain from ``alert_infra.email.services``, including Resend and
+SendGrid, but normal alert delivery does not enqueue or call this task.
+"""
+
 from celery import shared_task
 from django.template.loader import render_to_string
 import logging
