@@ -63,6 +63,24 @@ def test_build_dispatcher_missing_credentials() -> None:
         build_dispatcher({"ENABLED": True, "EMAIL": {"ENABLED": True}, "SLACK": {"ENABLED": False}, "TELEGRAM": {"ENABLED": False}})
 
 
+@pytest.mark.parametrize("backend", ["resend", "sendgrid"])
+def test_build_dispatcher_rejects_legacy_email_provider_names(backend: str) -> None:
+    with pytest.raises(AlertConfigurationError, match="supported alert email backends"):
+        build_dispatcher(
+            {
+                "ENABLED": True,
+                "EMAIL": {
+                    "ENABLED": True,
+                    "BACKEND": backend,
+                    "FROM_EMAIL": "alerts@example.com",
+                    "TO_EMAILS": ["ops@example.com"],
+                },
+                "SLACK": {"ENABLED": False},
+                "TELEGRAM": {"ENABLED": False},
+            }
+        )
+
+
 class User:
     id = 7
 

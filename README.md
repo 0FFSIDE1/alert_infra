@@ -77,6 +77,18 @@ Install Django support when using the `alert_infra.django` adapter:
 pip install "alert-infra[django]"
 ```
 
+Install the legacy template-email provider chain only if an older application
+still imports `alert_infra.email.tasks`, `alert_infra.email.services`, or
+`alert_infra.email.providers` directly:
+
+```bash
+pip install "alert-infra[legacy-email]"
+```
+
+The legacy extra installs `requests` and `sendgrid`. Resend delivery in that
+legacy path calls the Resend HTTP API through `requests`; it does not use the
+`resend` Python SDK.
+
 For local development from this repository:
 
 ```bash
@@ -587,6 +599,22 @@ Correlation ID: {{ alert.correlation_id }}
 
 The subject renderer collapses line breaks so email subjects remain single-line.
 
+### Resend and SendGrid status
+
+The active alert email integrations are:
+
+- `SMTPEmailTransport` for framework-agnostic SMTP delivery.
+- `DjangoEmailTransport` for Django's configured email backend.
+
+Resend and SendGrid code exists only in the legacy template-email path under
+`alert_infra.email.helper`, `alert_infra.email.providers`,
+`alert_infra.email.services`, and `alert_infra.email.tasks`. That path is not
+used by `AlertDispatcher`, `send_alert`, or `alert_infra.django.build_dispatcher`,
+and `ALERT_INFRA["EMAIL"]["BACKEND"]` does not accept `"resend"` or
+`"sendgrid"`. Use `BACKEND="django"` or `BACKEND="smtp"` for supported alert
+email delivery, or implement a custom transport if a project needs Resend or
+SendGrid in the dispatcher.
+
 ### Django settings reference
 
 `ALERT_INFRA` supports the following keys:
@@ -605,7 +633,7 @@ Email settings:
 | Key | Description |
 | --- | --- |
 | `ENABLED` | Enable email delivery. |
-| `BACKEND` | `"django"` for Django email backend or `"smtp"` for direct SMTP. |
+| `BACKEND` | `"django"` for Django email backend or `"smtp"` for direct SMTP. Resend and SendGrid are not dispatcher backends. |
 | `FROM_EMAIL` | Sender address. Falls back to `ALERT_FROM_EMAIL`. |
 | `TO_EMAILS` | Recipient list or comma-separated string. Falls back to `ALERT_TO_EMAILS`. |
 | `TIMEOUT` | Delivery timeout in seconds. |
@@ -957,6 +985,10 @@ from alert_infra.email import SMTPEmailTransport, format_alert_body, format_aler
 ```
 
 `SMTPEmailTransport.from_env(prefix="ALERT_SMTP_")` reads SMTP-related environment variables.
+
+Resend and SendGrid are not exported from the public email API and are not used
+by the alert dispatcher; they remain in legacy modules for direct callers of the
+older Celery/template-email workflow.
 
 ### App/webhook API
 

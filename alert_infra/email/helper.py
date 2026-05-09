@@ -1,3 +1,11 @@
+"""Legacy Django/Celery email helpers.
+
+This module is not part of the public alert dispatch path. The current
+``AlertDispatcher`` email integrations are ``SMTPEmailTransport`` and
+``DjangoEmailTransport``; Resend and SendGrid helpers remain here only for
+projects that still call the legacy ``send_notify_email_task`` flow directly.
+"""
+
 from django.core.cache import cache
 from email.mime.text import MIMEText
 import requests

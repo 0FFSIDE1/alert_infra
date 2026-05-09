@@ -1,4 +1,11 @@
-"""Compatibility helpers for legacy email provider integrations."""
+"""Compatibility helpers for legacy email provider integrations.
+
+The provider chain in this module is intentionally separate from the alert
+transport system. ``AlertDispatcher`` and ``alert_infra.django.build_dispatcher``
+only create ``SMTPEmailTransport`` or ``DjangoEmailTransport`` for email alerts;
+Resend and SendGrid are available here only for callers of the legacy
+``send_notify_email_task`` workflow.
+"""
 
 from __future__ import annotations
 
