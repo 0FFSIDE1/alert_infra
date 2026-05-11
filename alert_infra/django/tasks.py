@@ -54,9 +54,8 @@ if shared_task is not None:
             if retries < max_retries:
                 logger.warning("retrying alert dispatch for transports: %s", ", ".join(result.retryable))
                 raise self.retry(
-                    args=(),
+                    args=[alert_payload],
                     kwargs={
-                        "alert_payload": alert_payload,
                         "transport_names": list(result.retryable),
                         "async_options": options,
                     },
