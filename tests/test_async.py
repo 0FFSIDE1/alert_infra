@@ -135,11 +135,14 @@ def test_task_retries_only_retryable_failed_transports(monkeypatch) -> None:
 
     monkeypatch.setattr(django_tasks, "build_dispatcher", lambda: FakeDispatcher())
     monkeypatch.setattr(django_tasks.dispatch_alert_task, "retry", fake_retry)
+    payload = Alert(title="T", message="M").to_dict()
 
     with pytest.raises(Retry):
-        django_tasks.dispatch_alert_task.run(Alert(title="T", message="M").to_dict(), async_options={"MAX_RETRIES": 3, "RETRY_JITTER": False})
+        django_tasks.dispatch_alert_task.run(payload, async_options={"MAX_RETRIES": 3, "RETRY_JITTER": False})
 
     assert attempts == [()]
+    assert retry_kwargs["args"] == [payload]
+    assert "alert_payload" not in retry_kwargs["kwargs"]
     assert retry_kwargs["kwargs"]["transport_names"] == ["retryable"]
 
 
