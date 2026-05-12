@@ -25,10 +25,14 @@ def send_alert(
     """Send an alert using transports configured in Django settings."""
     cfg = get_alert_infra_settings()
     merged_metadata: dict[str, Any] = dict(metadata or {})
+
     if request is not None:
         request_meta = request_metadata(request)
-        request_ = request_meta.get("request_id")
+        request_meta_id = request_meta.get("request_id")
         merged_metadata["request"] = request_meta
+    else:
+        request_meta_id = request_id
+
 
     alert = Alert(
         title=title,
@@ -37,7 +41,7 @@ def send_alert(
         source=source,
         tags=tuple(tags),
         metadata=merged_metadata,
-        request_id=request_ or request_id,
+        request_id=request_meta_id if request_meta_id is not None else request_id,
         redact_sensitive_data=bool(cfg.get("REDACT_SENSITIVE_DATA", True)),
     )
     async_cfg = cfg.get("ASYNC", {}) or {}
