@@ -57,7 +57,7 @@ class TelegramBotTransport:
     def build_payload(self, alert: Alert) -> dict[str, Any]:
         return {
             "chat_id": self.chat_id,
-            "text": f"[{alert.severity.upper()}] {alert.title}\n{alert.message}\nSource: {alert.source or 'unknown'}",
+            "text": f"[{alert.severity.upper()}] {alert.title}\n{alert.message}\nSource: {alert.source or 'unknown'}\nMetadata: {alert.metadata}\nRequest ID: {alert.request_id}",
             "disable_web_page_preview": True,
         }
 

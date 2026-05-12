@@ -491,6 +491,7 @@ def update_invoice(request, invoice_id):
                 "user_id": request.user.id,
                 "authorization": request.headers.get("Authorization"),
             },
+            request_id=request_id,
             request=request,
         )
         return JsonResponse({"ok": False, "alert_sent": result.ok}, status=409)
